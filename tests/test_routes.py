@@ -12,13 +12,14 @@ from tests.factories import AccountFactory
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
 from service.routes import app
+from service import talisman
 
 DATABASE_URI = os.getenv(
     "DATABASE_URI", "postgresql://postgres:postgres@localhost:5432/postgres"
 )
 
 BASE_URL = "/accounts"
-
+HTTPS_ENVIRON = {'wsgi.url_scheme': 'https'}
 
 ######################################################################
 #  T E S T   C A S E S
@@ -33,7 +34,10 @@ class TestAccountService(TestCase):
         app.config["DEBUG"] = False
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
         app.logger.setLevel(logging.CRITICAL)
+        # Set up the test database
         init_db(app)
+        # Disable enforcing HTTPS in the test suite
+        talisman.force_https = False
 
     @classmethod
     def tearDownClass(cls):
@@ -123,11 +127,28 @@ class TestAccountService(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
-    # ADD YOUR TEST CASES HERE ...
+    def test_security_headers(self):
+        """It should return security headers"""
+        response = self.client.get(
+            "/",
+            environ_overrides=HTTPS_ENVIRON
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        headers = response.headers
+        self.assertEqual(headers['X-Frame-Options'], 'SAMEORIGIN')
+        self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(
+            headers['Content-Security-Policy'],
+            "default-src 'self'; object-src 'none'"
+        )
+        self.assertEqual(
+            headers['Referrer-Policy'],
+            'strict-origin-when-cross-origin'
+        )
 
     ######################################################################
-# LIST ACCOUNTS TEST CASES
-######################################################################
+    # LIST ACCOUNTS TEST CASES
+    ######################################################################
     def test_get_account_list(self):
         """It should Get a list of Accounts"""
         self._create_accounts(5)
@@ -144,9 +165,9 @@ class TestAccountService(TestCase):
         data = response.get_json()
         self.assertEqual(len(data), 0)
 
-######################################################################
-# READ ACCOUNT TEST CASES
-######################################################################
+    ######################################################################
+    # READ ACCOUNT TEST CASES
+    ######################################################################
     def test_read_an_account(self):
         """It should Read a single Account"""
         account = self._create_accounts(1)[0]
@@ -163,9 +184,9 @@ class TestAccountService(TestCase):
         response = self.client.get(f"{BASE_URL}/0")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-######################################################################
-# UPDATE ACCOUNT TEST CASES
-######################################################################
+    ######################################################################
+    # UPDATE ACCOUNT TEST CASES
+    ######################################################################
     def test_update_account(self):
         """It should Update an existing Account"""
         # Create an Account to update
@@ -186,9 +207,9 @@ class TestAccountService(TestCase):
         response = self.client.put(f"{BASE_URL}/0", json={"name": "not found"})
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-######################################################################
-# DELETE ACCOUNT TEST CASES
-######################################################################
+    ######################################################################
+    # DELETE ACCOUNT TEST CASES
+    ######################################################################
     def test_delete_account(self):
         """It should Delete an Account"""
         account = self._create_accounts(1)[0]
@@ -199,3 +220,15 @@ class TestAccountService(TestCase):
         """It should return 204 even Account that is not found"""
         response = self.client.delete(f"{BASE_URL}/0")
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+    ######################################################################
+    # CORS TEST CASES
+    ######################################################################
+    def test_cors_headers(self):
+        """It should return CORS headers"""
+        response = self.client.get(
+            "/",
+            environ_overrides=HTTPS_ENVIRON
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Check for the CORS header
+        self.assertEqual(response.headers.get('Access-Control-Allow-Origin'), '*')
